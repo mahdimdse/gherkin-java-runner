@@ -1,0 +1,5 @@
+# Test data for features/test-data.feature.
+# Steps refer to these keys in quotes, e.g.  Then the basket contains "total" items
+apples: 3
+bananas: 2
+total: 5
