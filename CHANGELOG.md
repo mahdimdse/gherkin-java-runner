@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Maven example: a scenario that reads its values from a YAML test data file and logs them with `scenario.log`, so Test Results shows the value used for each key.
+
 ## 0.1.1
 
 - Test Results output now lists `@Before` / `@After` hooks next to the steps (`@BeforeStep` / `@AfterStep` when they fail).
