@@ -1,0 +1,254 @@
+{
+  "name": "gherkin-java-runner",
+  "displayName": "Gherkin Runner for Java (Cucumber · Maven · Gradle)",
+  "description": "Run and debug Cucumber scenarios, single Examples rows and tag expressions from VS Code's Test Explorer. Works with Maven and Gradle. Ctrl+click a step to jump to its Java step definition.",
+  "version": "0.1.0",
+  "publisher": "mahdimohammad",
+  "author": "Mahdi Mohammad",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Testing",
+    "Debuggers",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "cucumber",
+    "gherkin",
+    "bdd",
+    "java",
+    "maven",
+    "gradle",
+    "test explorer"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.feature",
+    "onLanguage:feature"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "feature",
+        "aliases": [
+          "Gherkin",
+          "Cucumber feature"
+        ],
+        "extensions": [
+          ".feature"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "feature",
+        "scopeName": "text.gherkin.feature",
+        "path": "./syntaxes/gherkin.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "gherkinRunner.runTagExpression",
+        "title": "Run Scenarios by Tag Expression…",
+        "category": "Cucumber",
+        "icon": "$(run)"
+      },
+      {
+        "command": "gherkinRunner.debugTagExpression",
+        "title": "Debug Scenarios by Tag Expression…",
+        "category": "Cucumber",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "gherkinRunner.reindexSteps",
+        "title": "Re-index Step Definitions",
+        "category": "Cucumber"
+      },
+      {
+        "command": "gherkinRunner.refreshTests",
+        "title": "Refresh Feature Files",
+        "category": "Cucumber"
+      },
+      {
+        "command": "gherkinRunner.showOutput",
+        "title": "Show Runner Log",
+        "category": "Cucumber"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "gherkinRunner.runTagExpression",
+          "when": "resourceExtname == .feature",
+          "group": "cucumber@1"
+        },
+        {
+          "command": "gherkinRunner.debugTagExpression",
+          "when": "resourceExtname == .feature",
+          "group": "cucumber@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gherkinRunner.runTagExpression"
+        },
+        {
+          "command": "gherkinRunner.debugTagExpression"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Gherkin Runner for Java",
+      "properties": {
+        "gherkinRunner.buildTool": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "maven",
+            "gradle"
+          ],
+          "default": "auto",
+          "description": "Build tool used to compile tests and resolve the test classpath. 'auto' looks for pom.xml / build.gradle next to the feature file and upwards."
+        },
+        "gherkinRunner.mavenExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Maven executable. Empty = use the project's mvnw wrapper if present, otherwise 'mvn' on PATH."
+        },
+        "gherkinRunner.gradleExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Gradle executable. Empty = use the project's gradlew wrapper if present, otherwise 'gradle' on PATH."
+        },
+        "gherkinRunner.mavenArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments for the Maven compile step, e.g. [\"-o\", \"-Pintegration\"]."
+        },
+        "gherkinRunner.gradleArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments for the Gradle compile step, e.g. [\"--offline\"]."
+        },
+        "gherkinRunner.compileBeforeRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compile tests and refresh the classpath before every run. When off, the classpath from the previous run of that module is reused."
+        },
+        "gherkinRunner.javaHome": {
+          "type": "string",
+          "default": "",
+          "description": "JDK used to run Cucumber. Empty = JAVA_HOME, then java.jdt.ls.java.home, then 'java' on PATH."
+        },
+        "gherkinRunner.glue": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glue packages (step definitions/hooks). Empty = read cucumber.glue from junit-platform.properties / cucumber.properties / the runner class, otherwise auto-detect from classes that use Cucumber."
+        },
+        "gherkinRunner.vmArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra JVM arguments, e.g. [\"-Dspring.profiles.active=test\", \"-Xmx1g\"]."
+        },
+        "gherkinRunner.env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Extra environment variables for the test JVM."
+        },
+        "gherkinRunner.cucumberArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra Cucumber CLI arguments, e.g. [\"--plugin\", \"html:target/cucumber.html\"]."
+        },
+        "gherkinRunner.prettyOutput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Add Cucumber's 'pretty' plugin so the Test Results panel shows each step."
+        },
+        "gherkinRunner.tags": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Tag expression applied to **every** run, e.g. `not @wip`. Combined with `and` when you run by tag expression."
+        },
+        "gherkinRunner.featureGlob": {
+          "type": "string",
+          "default": "**/*.feature",
+          "description": "Glob used to find feature files."
+        },
+        "gherkinRunner.stepDefinitionGlob": {
+          "type": "string",
+          "default": "**/*.{java,kt}",
+          "description": "Glob used to find step definition source files for Ctrl+click navigation."
+        },
+        "gherkinRunner.exclude": {
+          "type": "string",
+          "default": "**/{node_modules,target,build,out,bin,.git,.gradle}/**",
+          "description": "Glob of folders to ignore when looking for features and step definitions."
+        },
+        "gherkinRunner.diagnostics.undefinedSteps": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a warning on steps that have no matching step definition."
+        },
+        "gherkinRunner.codeLens.tags": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 'Run @tag' CodeLens above tag lines."
+        },
+        "gherkinRunner.debug.attachTimeout": {
+          "type": "number",
+          "default": 120,
+          "description": "Seconds to wait for the test JVM to open its debug port."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "tsc -p tsconfig.test.json && node --test out-test/test/*.test.js",
+    "package": "npm run typecheck && npm run build -- --production && vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "test:e2e": "node test/e2e/run.mjs"
+  },
+  "dependencies": {
+    "@cucumber/cucumber-expressions": "^20.1.0",
+    "@cucumber/gherkin": "^42.0.1",
+    "@cucumber/messages": "^34.2.1",
+    "@cucumber/tag-expressions": "^11.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "1.93.0",
+    "@vscode/vsce": "^4.1.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-name/gherkin-java-runner.git"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": "out-test", "types": ["node"] },
+  "include": ["test/**/*.ts", "src/gherkinModel.ts", "src/messageParser.ts", "src/stepParser.ts", "src/stepMatcher.ts", "src/commandBuilder.ts", "src/projectModel.ts", "src/glue.ts", "src/tags.ts"]
+}

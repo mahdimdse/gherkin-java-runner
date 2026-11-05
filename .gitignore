@@ -1,0 +1,7 @@
+node_modules/
+dist/
+out/
+out-test/
+*.vsix
+test/e2e/*.bundle.js
+test/e2e/node_shim/

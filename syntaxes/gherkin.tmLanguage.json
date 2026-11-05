@@ -1,0 +1,80 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Gherkin",
+  "scopeName": "text.gherkin.feature",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#tags" },
+    { "include": "#language" },
+    { "include": "#blockKeywords" },
+    { "include": "#stepKeywords" },
+    { "include": "#docString" },
+    { "include": "#table" },
+    { "include": "#strings" },
+    { "include": "#outlineParam" },
+    { "include": "#numbers" }
+  ],
+  "repository": {
+    "comment": {
+      "match": "^\\s*(#.*)$",
+      "captures": { "1": { "name": "comment.line.number-sign.gherkin" } }
+    },
+    "language": {
+      "match": "^\\s*(#\\s*language\\s*:\\s*)([\\w-]+)",
+      "captures": {
+        "1": { "name": "comment.line.gherkin" },
+        "2": { "name": "constant.language.gherkin" }
+      }
+    },
+    "tags": {
+      "match": "(?<=^|\\s)@[^\\s@#]+",
+      "name": "entity.name.tag.gherkin"
+    },
+    "blockKeywords": {
+      "match": "^\\s*(Feature|Business Need|Ability|Rule|Background|Scenario Outline|Scenario Template|Scenario|Example|Examples|Scenarios|Funktionalität|Funcionalidade|Característica|Fonctionnalité|Szenario|Cenário|Escenario|Scénario|Beispiele|Exemplos|Ejemplos|Exemples|Grundlage|Contexto|Contexte|Omadus|Stsenaarium|Juhtumid|Taust)(\\s*:)(.*)$",
+      "captures": {
+        "1": { "name": "keyword.control.block.gherkin" },
+        "2": { "name": "keyword.control.block.gherkin" },
+        "3": { "name": "entity.name.section.gherkin" }
+      }
+    },
+    "stepKeywords": {
+      "match": "^\\s*(Given|When|Then|And|But|\\*|Angenommen|Wenn|Dann|Und|Aber|Dado|Dada|Quando|Cuando|Então|Entonces|E|Y|Mas|Pero|Soit|Quand|Alors|Et|Mais|Eeldades|Kui|Siis|Ja|Kuid)(\\s)",
+      "captures": { "1": { "name": "keyword.other.step.gherkin" } }
+    },
+    "docString": {
+      "begin": "^\\s*(\"\"\"|```)\\s*(\\S*)$",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.string.begin.gherkin" },
+        "2": { "name": "entity.other.attribute-name.gherkin" }
+      },
+      "end": "^\\s*(\\1)\\s*$",
+      "endCaptures": { "1": { "name": "punctuation.definition.string.end.gherkin" } },
+      "contentName": "string.quoted.docstring.gherkin"
+    },
+    "table": {
+      "begin": "^\\s*(?=\\|)",
+      "end": "$",
+      "patterns": [
+        { "match": "\\|", "name": "punctuation.separator.table.gherkin" },
+        { "include": "#outlineParam" },
+        { "include": "#numbers" },
+        { "match": "[^|]+", "name": "string.unquoted.table.gherkin" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "match": "\"[^\"]*\"", "name": "string.quoted.double.gherkin" },
+        { "match": "'[^']*'", "name": "string.quoted.single.gherkin" }
+      ]
+    },
+    "outlineParam": {
+      "match": "<[^<>\\s][^<>]*>",
+      "name": "variable.parameter.outline.gherkin"
+    },
+    "numbers": {
+      "match": "(?<![\\w.])-?\\d+(\\.\\d+)?(?![\\w.])",
+      "name": "constant.numeric.gherkin"
+    }
+  }
+}
