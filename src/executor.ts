@@ -24,6 +24,8 @@ import {
   CaseKey,
   CaseResult,
   CucumberMessageProcessor,
+  formatScenarioHeader,
+  formatStep,
   parseAssertion,
   parseJavaStackFrames,
 } from './messageParser';
@@ -195,13 +197,12 @@ export async function runGroup(ctx: ExecContext, g: GroupRun): Promise<void> {
   const debugPort = g.debug ? await freePort() : undefined;
   const jvm = jvmArgs({
     vmArgs: g.cfg.vmArgs,
-    systemProperties: forwardedSystemProperties(props),
+    systemProperties: forwardedSystemProperties(props, g.cfg.prettyOutput),
     debugPort,
     javaMajor: java.major,
   });
   const cuke = cucumberArgs({
     messageFile,
-    pretty: g.cfg.prettyOutput,
     glue: glue.glue,
     extraArgs: g.cfg.cucumberArgs,
     features: g.selections,
@@ -237,11 +238,17 @@ export async function runGroup(ctx: ExecContext, g: GroupRun): Promise<void> {
   };
 
   const processor = new CucumberMessageProcessor({
-    onCaseStarted: (key, id) => {
+    onCaseStarted: (key, id, name) => {
       const item = lookup(key);
-      if (!item) return;
-      running.set(id, item);
-      run.started(item);
+      if (item) {
+        running.set(id, item);
+        run.started(item);
+      }
+      if (g.cfg.prettyOutput) run.appendOutput(crlf(formatScenarioHeader(name, key)), undefined, item);
+    },
+    onStepFinished: (step, id) => {
+      const text = g.cfg.prettyOutput ? formatStep(step) : '';
+      if (text) run.appendOutput(crlf(text), undefined, running.get(id));
     },
     onCaseFinished: (result) => {
       const item = lookup(result);
@@ -290,6 +297,8 @@ export async function runGroup(ctx: ExecContext, g: GroupRun): Promise<void> {
     env,
     onStdout: (t) => {
       tail.add(t);
+      // Print finished steps first so console output lands after the step it follows.
+      readMessages();
       run.appendOutput(crlf(t), undefined, singleRunning());
       if (g.debug && !attachRequested && /Listening for transport dt_socket at address/.test(t)) {
         attachRequested = true;

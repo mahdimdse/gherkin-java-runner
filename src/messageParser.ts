@@ -1,4 +1,5 @@
 // Incremental processor for Cucumber's `message` (NDJSON) output. Pure, no vscode import.
+import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 export type CucumberStatus = 'PASSED' | 'FAILED' | 'AMBIGUOUS' | 'UNDEFINED' | 'PENDING' | 'SKIPPED' | 'UNKNOWN';
@@ -23,8 +24,25 @@ export interface CaseResult extends CaseKey {
   scenarioName?: string;
 }
 
+export type HookKind = 'Before' | 'After' | 'BeforeStep' | 'AfterStep' | 'Hook';
+
+/** One finished step or hook, for the step-by-step console output. */
+export interface StepReport {
+  /** Gherkin keyword ('Given ', 'And ', …) for steps; undefined for hooks. */
+  keyword?: string;
+  hook?: HookKind;
+  /** Step text, or the hook's name / Java method. */
+  text: string;
+  status: CucumberStatus;
+  durationMs?: number;
+  error?: string;
+  docString?: string;
+  dataTable?: string[][];
+}
+
 export interface ProcessorEvents {
-  onCaseStarted?(key: CaseKey, testCaseStartedId: string): void;
+  onCaseStarted?(key: CaseKey, testCaseStartedId: string, scenarioName: string): void;
+  onStepFinished?(step: StepReport, testCaseStartedId: string): void;
   onCaseFinished?(result: CaseResult): void;
   onAttachment?(text: string, testCaseStartedId?: string): void;
   onParseError?(err: string): void;
@@ -47,6 +65,20 @@ interface Timestamp {
 
 const tsMs = (t?: Timestamp) => (t ? Number(t.seconds) * 1000 + t.nanos / 1e6 : undefined);
 
+const HOOK_TYPES: Record<string, HookKind> = {
+  BEFORE_TEST_CASE: 'Before',
+  AFTER_TEST_CASE: 'After',
+  BEFORE_TEST_STEP: 'BeforeStep',
+  AFTER_TEST_STEP: 'AfterStep',
+};
+
+/** Newer Cucumber puts only the short text in `message` and the full trace in `exception.stackTrace`. */
+function resultMessage(result: any): string | undefined {
+  const exception = result.exception;
+  if (exception?.stackTrace) return String(exception.stackTrace).replace(/\r\n/g, '\n');
+  return result.message ?? (exception ? [exception.type, exception.message].filter(Boolean).join(': ') : undefined);
+}
+
 export function uriToPath(uri: string): string {
   if (uri.startsWith('file:')) {
     try {
@@ -62,7 +94,27 @@ interface PickleInfo {
   uri: string;
   name: string;
   astNodeIds: string[];
-  steps: Map<string, { text: string; astNodeIds: string[] }>;
+  steps: Map<string, PickleStepInfo>;
+}
+
+interface PickleStepInfo {
+  text: string;
+  astNodeIds: string[];
+  docString?: string;
+  dataTable?: string[][];
+}
+
+interface TestStepInfo {
+  pickleStepId?: string;
+  hookId?: string;
+  index: number;
+}
+
+interface TestCaseInfo {
+  pickleId: string;
+  steps: Map<string, TestStepInfo>;
+  firstPickleStep: number;
+  lastPickleStep: number;
 }
 
 interface Running {
@@ -78,8 +130,10 @@ interface Running {
 
 export class CucumberMessageProcessor {
   private lineOfAstNode = new Map<string, number>();
+  private keywordOfAstNode = new Map<string, string>();
+  private hooks = new Map<string, { kind?: HookKind; label: string }>();
   private pickles = new Map<string, PickleInfo>();
-  private testCases = new Map<string, { pickleId: string; steps: Map<string, string | undefined> }>();
+  private testCases = new Map<string, TestCaseInfo>();
   private running = new Map<string, Running>();
   private snippetsByPickleStep = new Map<string, string[]>();
   private buffer = '';
@@ -115,6 +169,7 @@ export class CucumberMessageProcessor {
     }
     if (env.gherkinDocument) this.onGherkinDocument(env.gherkinDocument);
     else if (env.pickle) this.onPickle(env.pickle);
+    else if (env.hook) this.onHook(env.hook);
     else if (env.testCase) this.onTestCase(env.testCase);
     else if (env.testCaseStarted) this.onTestCaseStarted(env.testCaseStarted);
     else if (env.testStepFinished) this.onTestStepFinished(env.testStepFinished);
@@ -124,15 +179,19 @@ export class CucumberMessageProcessor {
   }
 
   private onGherkinDocument(doc: any): void {
+    const visitStep = (st: any) => {
+      this.lineOfAstNode.set(st.id, st.location.line);
+      if (st.keyword) this.keywordOfAstNode.set(st.id, st.keyword);
+    };
     const visitScenario = (sc: any) => {
       this.lineOfAstNode.set(sc.id, sc.location.line);
-      for (const st of sc.steps ?? []) this.lineOfAstNode.set(st.id, st.location.line);
+      for (const st of sc.steps ?? []) visitStep(st);
       for (const ex of sc.examples ?? []) {
         for (const row of ex.tableBody ?? []) this.lineOfAstNode.set(row.id, row.location.line);
       }
     };
     const visitBackground = (bg: any) => {
-      for (const st of bg.steps ?? []) this.lineOfAstNode.set(st.id, st.location.line);
+      for (const st of bg.steps ?? []) visitStep(st);
     };
     for (const child of doc.feature?.children ?? []) {
       if (child.scenario) visitScenario(child.scenario);
@@ -145,15 +204,45 @@ export class CucumberMessageProcessor {
   }
 
   private onPickle(p: any): void {
-    const steps = new Map<string, { text: string; astNodeIds: string[] }>();
-    for (const s of p.steps ?? []) steps.set(s.id, { text: s.text, astNodeIds: s.astNodeIds ?? [] });
+    const steps = new Map<string, PickleStepInfo>();
+    for (const s of p.steps ?? []) {
+      steps.set(s.id, {
+        text: s.text,
+        astNodeIds: s.astNodeIds ?? [],
+        docString: s.argument?.docString?.content,
+        dataTable: s.argument?.dataTable?.rows?.map((r: any) => (r.cells ?? []).map((c: any) => String(c.value ?? ''))),
+      });
+    }
     this.pickles.set(p.id, { uri: p.uri, name: p.name, astNodeIds: p.astNodeIds ?? [], steps });
   }
 
+  private onHook(h: any): void {
+    const m = h.sourceReference?.javaMethod;
+    const label = h.name || (m ? `${String(m.className).split('.').pop()}.${m.methodName}()` : h.tagExpression ?? '');
+    this.hooks.set(h.id, { kind: HOOK_TYPES[h.type], label });
+  }
+
   private onTestCase(tc: any): void {
-    const steps = new Map<string, string | undefined>();
-    for (const s of tc.testSteps ?? []) steps.set(s.id, s.pickleStepId);
-    this.testCases.set(tc.id, { pickleId: tc.pickleId, steps });
+    const steps = new Map<string, TestStepInfo>();
+    let firstPickleStep = Infinity;
+    let lastPickleStep = -1;
+    (tc.testSteps ?? []).forEach((s: any, index: number) => {
+      steps.set(s.id, { pickleStepId: s.pickleStepId, hookId: s.hookId, index });
+      if (s.pickleStepId) {
+        firstPickleStep = Math.min(firstPickleStep, index);
+        lastPickleStep = index;
+      }
+    });
+    this.testCases.set(tc.id, { pickleId: tc.pickleId, steps, firstPickleStep, lastPickleStep });
+  }
+
+  /** Older Cucumber versions omit the hook type, so infer it from the position in the test case. */
+  private hookKind(tc: TestCaseInfo, step: TestStepInfo): HookKind {
+    const known = step.hookId ? this.hooks.get(step.hookId)?.kind : undefined;
+    if (known) return known;
+    if (step.index < tc.firstPickleStep) return 'Before';
+    if (step.index > tc.lastPickleStep) return 'After';
+    return 'Hook';
   }
 
   private keyForPickle(p: PickleInfo): CaseKey {
@@ -175,7 +264,7 @@ export class CucumberMessageProcessor {
       worst: 'PASSED',
       pickleStepIds: [],
     });
-    this.events.onCaseStarted?.(key, tcs.id);
+    this.events.onCaseStarted?.(key, tcs.id, pickle.name);
   }
 
   private onTestStepFinished(tsf: any): void {
@@ -185,18 +274,24 @@ export class CucumberMessageProcessor {
     const status: CucumberStatus = result.status ?? 'UNKNOWN';
     const tc = this.testCases.get(r.testCaseId);
     const pickle = tc && this.pickles.get(tc.pickleId);
-    const pickleStepId = tc?.steps.get(tsf.testStepId);
+    const testStep = tc?.steps.get(tsf.testStepId);
+    const pickleStepId = testStep?.pickleStepId;
     if (pickleStepId) r.pickleStepIds.push(pickleStepId);
+    const ps = pickleStepId ? pickle?.steps.get(pickleStepId) : undefined;
+    const message = resultMessage(result);
     if (SEVERITY[status] > SEVERITY[r.worst]) {
       r.worst = status;
-      const exception = result.exception;
-      r.message =
-        result.message ??
-        (exception ? [exception.type, exception.message].filter(Boolean).join(': ') + (exception.stackTrace ? '\n' + exception.stackTrace : '') : undefined);
-      const ps = pickleStepId ? pickle?.steps.get(pickleStepId) : undefined;
+      r.message = message;
       r.stepLine = ps ? this.lineOfAstNode.get(ps.astNodeIds[0]) : r.key.line;
       r.stepText = ps?.text;
     }
+    if (!tc || !testStep || !this.events.onStepFinished) return;
+    const report: StepReport = ps
+      ? { keyword: this.keywordOfAstNode.get(ps.astNodeIds[0]) ?? '* ', text: ps.text, docString: ps.docString, dataTable: ps.dataTable, status }
+      : { hook: this.hookKind(tc, testStep), text: (testStep.hookId && this.hooks.get(testStep.hookId)?.label) || '', status };
+    report.durationMs = tsMs(result.duration);
+    if (status !== 'PASSED' && status !== 'SKIPPED') report.error = message;
+    this.events.onStepFinished(report, tsf.testCaseStartedId);
   }
 
   private onSuggestion(s: any): void {
@@ -236,6 +331,41 @@ export class CucumberMessageProcessor {
     this.finished.push(result);
     this.events.onCaseFinished?.(result);
   }
+}
+
+const ANSI = { reset: '\x1b[0m', bold: '\x1b[1m', grey: '\x1b[90m', red: '\x1b[31m', green: '\x1b[32m', yellow: '\x1b[33m', cyan: '\x1b[36m' };
+
+const STATUS_STYLE: Record<CucumberStatus, [icon: string, color: string]> = {
+  PASSED: ['✔', ANSI.green],
+  FAILED: ['✘', ANSI.red],
+  AMBIGUOUS: ['✘', ANSI.red],
+  UNDEFINED: ['?', ANSI.yellow],
+  PENDING: ['?', ANSI.yellow],
+  SKIPPED: ['↷', ANSI.cyan],
+  UNKNOWN: ['•', ANSI.grey],
+};
+
+const indent = (text: string, by: string) => text.replace(/\r?\n$/, '').split(/\r?\n/).map((l) => by + l).join('\n') + '\n';
+
+export function formatScenarioHeader(scenarioName: string, key: CaseKey): string {
+  return `\n${ANSI.bold}Scenario: ${scenarioName}${ANSI.reset} ${ANSI.grey}# ${path.basename(key.featurePath)}:${key.line}${ANSI.reset}\n`;
+}
+
+/** One step or hook as console text with ANSI colours; '' for passing BeforeStep/AfterStep hooks (too noisy). */
+export function formatStep(s: StepReport): string {
+  const quietHook = s.hook && s.hook !== 'Before' && s.hook !== 'After';
+  if (quietHook && (s.status === 'PASSED' || s.status === 'SKIPPED')) return '';
+  const [icon, color] = STATUS_STYLE[s.status];
+  let out = s.hook
+    ? `  ${color}${icon} ${s.hook}${ANSI.reset} ${ANSI.grey}${s.text}${s.durationMs !== undefined ? ` (${Math.round(s.durationMs)} ms)` : ''}${ANSI.reset}\n`
+    : `  ${color}${icon} ${s.keyword}${s.text}${ANSI.reset}\n`;
+  if (s.docString !== undefined) out += indent(`"""\n${s.docString}\n"""`, '      ');
+  if (s.dataTable?.length) {
+    const widths = s.dataTable[0].map((_, c) => Math.max(...s.dataTable!.map((r) => (r[c] ?? '').length)));
+    out += s.dataTable.map((r) => '      | ' + r.map((v, c) => v.padEnd(widths[c])).join(' | ') + ' |\n').join('');
+  }
+  if (s.error) out += ANSI.red + indent(s.error, '      ') + ANSI.reset;
+  return out;
 }
 
 export interface ParsedFailure {

@@ -17,7 +17,7 @@ import {
 } from '../src/commandBuilder';
 import { expandStepText, leavesOf, parseFeature } from '../src/gherkinModel';
 import { minimizePackages, parseRunnerGlue, resolveGlue } from '../src/glue';
-import { CaseResult, CucumberMessageProcessor, parseAssertion, parseJavaStackFrames } from '../src/messageParser';
+import { CaseResult, CucumberMessageProcessor, formatScenarioHeader, formatStep, parseAssertion, parseJavaStackFrames, StepReport } from '../src/messageParser';
 import { detectProject, parseProperties, pomModules } from '../src/projectModel';
 import { StepMatcher } from '../src/stepMatcher';
 import { parseStepSource } from '../src/stepParser';
@@ -276,6 +276,56 @@ test('message processor: maps scenarios, rows, failures, undefined steps and ret
   assert.deepEqual(done[2].snippets, ['@When("I pay {int} euros by {string}")']);
 });
 
+test('message processor: step and hook reports for the console output', () => {
+  const env = (o: unknown) => JSON.stringify(o) + '\n';
+  const uri = 'file:///work/a.feature';
+  const doc = {
+    gherkinDocument: {
+      uri,
+      feature: {
+        children: [
+          { background: { steps: [{ id: 'b1', keyword: 'Given ', location: { line: 3 } }] } },
+          { scenario: { id: 's1', location: { line: 5 }, steps: [{ id: 'st1', keyword: 'When ', location: { line: 6 } }], examples: [] } },
+        ],
+      },
+    },
+  };
+  const steps: StepReport[] = [];
+  const p = new CucumberMessageProcessor({ onStepFinished: (s) => steps.push(s) });
+  p.feed(
+    [
+      env(doc),
+      env({ hook: { id: 'hb', type: 'BEFORE_TEST_CASE', sourceReference: { javaMethod: { className: 'com.acme.Hooks', methodName: 'setUp' } } } }),
+      env({ hook: { id: 'hs', type: 'AFTER_TEST_STEP', sourceReference: { javaMethod: { className: 'com.acme.Hooks', methodName: 'shot' } } } }),
+      env({ hook: { id: 'ha', name: 'cleanup' } }),
+      env({ pickle: { id: 'p1', uri, name: 'S', astNodeIds: ['s1'], steps: [
+        { id: 'ps1', text: 'a user', astNodeIds: ['b1'], argument: { dataTable: { rows: [{ cells: [{ value: 'name' }, { value: 'age' }] }, { cells: [{ value: 'Bo' }, { value: '7' }] }] } } },
+        { id: 'ps2', text: 'it runs', astNodeIds: ['st1'] },
+      ] } }),
+      env({ testCase: { id: 'tc1', pickleId: 'p1', testSteps: [{ id: 'h1', hookId: 'hb' }, { id: 't1', pickleStepId: 'ps1' }, { id: 'h2', hookId: 'hs' }, { id: 't2', pickleStepId: 'ps2' }, { id: 'h3', hookId: 'ha' }] } }),
+      env({ testCaseStarted: { id: 'a1', testCaseId: 'tc1', timestamp: { seconds: 1, nanos: 0 } } }),
+      env({ testStepFinished: { testCaseStartedId: 'a1', testStepId: 'h1', testStepResult: { status: 'PASSED', duration: { seconds: 0, nanos: 3000000 } } } }),
+      env({ testStepFinished: { testCaseStartedId: 'a1', testStepId: 't1', testStepResult: { status: 'PASSED' } } }),
+      env({ testStepFinished: { testCaseStartedId: 'a1', testStepId: 'h2', testStepResult: { status: 'PASSED' } } }),
+      env({ testStepFinished: { testCaseStartedId: 'a1', testStepId: 't2', testStepResult: { status: 'FAILED', message: 'boom', exception: { type: 'java.lang.IllegalStateException', message: 'boom', stackTrace: 'java.lang.IllegalStateException: boom\r\n\tat com.acme.S.run(S.java:9)' } } } }),
+      env({ testStepFinished: { testCaseStartedId: 'a1', testStepId: 'h3', testStepResult: { status: 'PASSED' } } }),
+    ].join(''),
+  );
+  assert.deepEqual(steps.map((s) => [s.hook ?? s.keyword, s.text, s.status]), [
+    ['Before', 'Hooks.setUp()', 'PASSED'],
+    ['Given ', 'a user', 'PASSED'],
+    ['AfterStep', 'Hooks.shot()', 'PASSED'],
+    ['When ', 'it runs', 'FAILED'],
+    ['After', 'cleanup', 'PASSED'], // no type: inferred from position
+  ]);
+  const plain = (s: string) => s.replace(/\x1b\[\d+m/g, '');
+  assert.equal(plain(formatStep(steps[0])), '  ✔ Before Hooks.setUp() (3 ms)\n');
+  assert.equal(plain(formatStep(steps[1])), '  ✔ Given a user\n      | name | age |\n      | Bo   | 7   |\n');
+  assert.equal(formatStep(steps[2]), '');
+  assert.equal(plain(formatStep(steps[3])), '  ✘ When it runs\n      java.lang.IllegalStateException: boom\n      \tat com.acme.S.run(S.java:9)\n');
+  assert.equal(plain(formatScenarioHeader('S', { featurePath: '/work/a.feature', line: 5 })), '\nScenario: S # a.feature:5\n');
+});
+
 test('assertion + stack trace parsing', () => {
   const junit = parseAssertion('org.opentest4j.AssertionFailedError: expected: <confirmed> but was: <rejected>\n\tat x.Y.z(Y.java:1)');
   assert.equal(junit.expected, 'confirmed');
@@ -306,12 +356,21 @@ test('command builder: maven, gradle, cucumber args, argfile, jdwp', () => {
   assert.equal(featureArgument({ path: '/f/a.feature' }), '/f/a.feature');
   assert.equal(featureArgument({ path: '/f/a.feature', lines: [20, 8, 20] }), '/f/a.feature:8:20');
   assert.deepEqual(
-    cucumberArgs({ messageFile: '/m.ndjson', pretty: true, glue: ['com.acme'], extraArgs: ['--strict'], features: [{ path: '/f/a.feature', lines: [8] }] }),
-    ['--plugin', 'message:/m.ndjson', '--plugin', 'pretty', '--glue', 'com.acme', '--strict', '/f/a.feature:8'],
+    cucumberArgs({ messageFile: '/m.ndjson', glue: ['com.acme'], extraArgs: ['--strict'], features: [{ path: '/f/a.feature', lines: [8] }] }),
+    ['--plugin', 'message:/m.ndjson', '--glue', 'com.acme', '--strict', '/f/a.feature:8'],
   );
   assert.deepEqual(forwardedSystemProperties({ 'cucumber.glue': 'x', 'cucumber.filter.tags': '@a', 'cucumber.object-factory': 'Spring', 'cucumber.features': 'y' }), {
     'cucumber.publish.quiet': 'true',
     'cucumber.object-factory': 'Spring',
+  });
+  assert.deepEqual(forwardedSystemProperties({ 'cucumber.plugin': 'progress, html:C:\\out\\r.html ,json' }, true), {
+    'cucumber.publish.quiet': 'true',
+    'cucumber.plugin': 'html:C:\\out\\r.html',
+  });
+  assert.deepEqual(forwardedSystemProperties({ 'cucumber.plugin': 'progress' }, true), { 'cucumber.publish.quiet': 'true' });
+  assert.deepEqual(forwardedSystemProperties({ 'cucumber.plugin': 'progress' }, false), {
+    'cucumber.publish.quiet': 'true',
+    'cucumber.plugin': 'progress',
   });
   assert.equal(argFileContent(['-cp', 'C:\\a b\\c.jar', 'say "hi"']), '"-cp"\n"C:\\\\a b\\\\c.jar"\n"say \\"hi\\""\n');
   assert.equal(jdwpArgument(5005, 17), '-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=127.0.0.1:5005');
