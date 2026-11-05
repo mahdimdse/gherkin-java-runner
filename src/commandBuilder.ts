@@ -112,7 +112,6 @@ export function featureArgument(sel: FeatureSelection): string {
 
 export interface CucumberArgsInput {
   messageFile: string;
-  pretty: boolean;
   glue: string[];
   extraArgs: string[];
   features: FeatureSelection[];
@@ -120,7 +119,6 @@ export interface CucumberArgsInput {
 
 export function cucumberArgs(i: CucumberArgsInput): string[] {
   const args: string[] = ['--plugin', `message:${i.messageFile}`];
-  if (i.pretty) args.push('--plugin', 'pretty');
   for (const g of i.glue) args.push('--glue', g);
   args.push(...i.extraArgs);
   args.push(...i.features.map(featureArgument));
@@ -132,9 +130,26 @@ export const CUCUMBER_MAIN = 'io.cucumber.core.cli.Main';
 /** System properties read from junit-platform.properties that must not be forwarded. */
 const NOT_FORWARDED = /^cucumber\.(features|filter\.|glue$|execution\.|junit-platform\.)/;
 
-export function forwardedSystemProperties(props: Record<string, string>): Record<string, string> {
+/** Built-in Cucumber formatters that write to STDOUT when given no output path. */
+const STDOUT_FORMATTERS = new Set(['pretty', 'progress', 'json', 'html', 'junit', 'testng', 'message', 'rerun', 'usage', 'teamcity', 'unused']);
+
+/** Drops plugins that would write to STDOUT; they would duplicate our own step-by-step output. */
+export function withoutStdoutPlugins(pluginList: string): string {
+  return pluginList
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => p && !(p.indexOf(':') < 0 && STDOUT_FORMATTERS.has(p)))
+    .join(',');
+}
+
+export function forwardedSystemProperties(props: Record<string, string>, pretty = false): Record<string, string> {
   const out: Record<string, string> = { 'cucumber.publish.quiet': 'true' };
   for (const [k, v] of Object.entries(props)) if (!NOT_FORWARDED.test(k)) out[k] = v;
+  if (pretty && out['cucumber.plugin'] !== undefined) {
+    const plugins = withoutStdoutPlugins(out['cucumber.plugin']);
+    if (plugins) out['cucumber.plugin'] = plugins;
+    else delete out['cucumber.plugin'];
+  }
   return out;
 }
 

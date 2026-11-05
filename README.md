@@ -75,7 +75,7 @@ Try it on the projects in `example/maven` and `example/gradle`.
 | `gherkinRunner.vmArgs` | `[]` | e.g. `["-Dspring.profiles.active=test"]` |
 | `gherkinRunner.env` | `{}` | Environment variables for the test JVM |
 | `gherkinRunner.cucumberArgs` | `[]` | e.g. `["--plugin", "html:target/cucumber.html"]` |
-| `gherkinRunner.prettyOutput` | `true` | Step-by-step console output in Test Results |
+| `gherkinRunner.prettyOutput` | `true` | Step-by-step console output in Test Results, including `@Before` / `@After` hooks (`@BeforeStep` / `@AfterStep` only when they fail). Console formatters in `cucumber.plugin` (e.g. `progress`) are skipped while this is on |
 | `gherkinRunner.tags` | | Tag expression applied to every run |
 | `gherkinRunner.featureGlob` | `**/*.feature` | Where to find features |
 | `gherkinRunner.stepDefinitionGlob` | `**/*.{java,kt}` | Where to find step definitions |
