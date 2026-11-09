@@ -2,7 +2,7 @@
   "name": "gherkin-java-runner",
   "displayName": "Gherkin Runner for Java (Cucumber · Maven · Gradle)",
   "description": "Run and debug Cucumber scenarios, single Examples rows and tag expressions from VS Code's Test Explorer. Works with Maven and Gradle. Ctrl+click a step to jump to its Java step definition.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "mahdimohammad",
   "author": "Mahdi Mohammad",
   "license": "MIT",
@@ -186,6 +186,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show each step and @Before/@After hook in the Test Results panel. While on, console formatters from cucumber.plugin (e.g. 'progress') are not used."
+        },
+        "gherkinRunner.summaryTable": {
+          "type": "boolean",
+          "default": true,
+          "description": "When a run finishes, show a table per scenario in the Test Results panel listing every step and @Before/@After hook with its status and duration."
         },
         "gherkinRunner.tags": {
           "type": "string",

@@ -24,8 +24,10 @@ import {
   CaseKey,
   CaseResult,
   CucumberMessageProcessor,
+  formatCaseSummary,
   formatScenarioHeader,
   formatStep,
+  formatSummaryHeader,
   parseAssertion,
   parseJavaStackFrames,
 } from './messageParser';
@@ -361,6 +363,11 @@ export async function runGroup(ctx: ExecContext, g: GroupRun): Promise<void> {
   disposables.forEach((d) => d.dispose());
   if (debugSession) void vscode.debug.stopDebugging(debugSession);
   ctx.log.appendLine(`[run] cucumber exited with code ${code}`);
+
+  if (g.cfg.summaryTable && processor.finished.length) {
+    run.appendOutput(crlf(formatSummaryHeader(processor.finished)));
+    for (const r of processor.finished) run.appendOutput(crlf(formatCaseSummary(r)), undefined, lookup(r));
+  }
 
   // 5. Anything we asked for but did not get a result for
   const missing = leafItems.filter((i) => !reported.has(i));

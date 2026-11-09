@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import {
   argFileContent,
   cucumberArgs,
@@ -17,7 +18,17 @@ import {
 } from '../src/commandBuilder';
 import { expandStepText, leavesOf, parseFeature } from '../src/gherkinModel';
 import { minimizePackages, parseRunnerGlue, resolveGlue } from '../src/glue';
-import { CaseResult, CucumberMessageProcessor, formatScenarioHeader, formatStep, parseAssertion, parseJavaStackFrames, StepReport } from '../src/messageParser';
+import {
+  CaseResult,
+  CucumberMessageProcessor,
+  formatCaseSummary,
+  formatScenarioHeader,
+  formatStep,
+  formatSummaryHeader,
+  parseAssertion,
+  parseJavaStackFrames,
+  StepReport,
+} from '../src/messageParser';
 import { detectProject, parseProperties, pomModules } from '../src/projectModel';
 import { StepMatcher } from '../src/stepMatcher';
 import { parseStepSource } from '../src/stepParser';
@@ -318,12 +329,36 @@ test('message processor: step and hook reports for the console output', () => {
     ['When ', 'it runs', 'FAILED'],
     ['After', 'cleanup', 'PASSED'], // no type: inferred from position
   ]);
-  const plain = (s: string) => s.replace(/\x1b\[\d+m/g, '');
+  const plain = (s: string) => s.replace(/\x1b\[\d+m/g, '').replace(/\x1b\]8;;[^\x1b]*\x1b\\/g, '');
   assert.equal(plain(formatStep(steps[0])), '  ✔ Before Hooks.setUp() (3 ms)\n');
   assert.equal(plain(formatStep(steps[1])), '  ✔ Given a user\n      | name | age |\n      | Bo   | 7   |\n');
   assert.equal(formatStep(steps[2]), '');
   assert.equal(plain(formatStep(steps[3])), '  ✘ When it runs\n      java.lang.IllegalStateException: boom\n      \tat com.acme.S.run(S.java:9)\n');
   assert.equal(plain(formatScenarioHeader('S', { featurePath: '/work/a.feature', line: 5 })), '\nScenario: S # a.feature:5\n');
+
+  const result: CaseResult = { featurePath: '/work/a.feature', line: 5, status: 'FAILED', durationMs: 1500, snippets: [], scenarioName: 'S', steps };
+  assert.equal(
+    plain(formatCaseSummary(result)),
+    [
+      '',
+      'S # a.feature:5  ✘ FAILED (1.5 s)',
+      '  ┌───┬──────────────────────┬──────────┬──────┬─────────────┐',
+      '  │ # │ Step                 │ Status   │ Time │ Line        │',
+      '  ├───┼──────────────────────┼──────────┼──────┼─────────────┤',
+      '  │ 1 │ Before Hooks.setUp() │ ✔ passed │ 3 ms │             │',
+      '  │ 2 │ Given a user         │ ✔ passed │      │ a.feature:3 │',
+      '  │ 3 │ When it runs         │ ✘ failed │      │ a.feature:6 │',
+      '  │ 4 │ After cleanup        │ ✔ passed │      │             │',
+      '  └───┴──────────────────────┴──────────┴──────┴─────────────┘',
+      '',
+    ].join('\n'),
+  );
+  // Ctrl+click target: an OSC 8 link to the step's line, around the text only
+  const featureFile = path.resolve('/work/a.feature');
+  const linked = formatCaseSummary({ ...result, featurePath: featureFile });
+  assert.ok(linked.includes(`\x1b]8;;${pathToFileURL(featureFile).href}#L6\x1b\\a.feature:6\x1b]8;;\x1b\\ │`));
+  assert.ok(linked.includes(`\x1b]8;;${pathToFileURL(featureFile).href}#L5\x1b\\a.feature:5\x1b]8;;\x1b\\`));
+  assert.equal(plain(formatSummaryHeader([result])), '\n━━ Summary: 1 scenario(s) ━━ 1 failed\n');
 });
 
 test('assertion + stack trace parsing', () => {

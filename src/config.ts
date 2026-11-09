@@ -14,6 +14,7 @@ export interface RunnerConfig {
   env: Record<string, string>;
   cucumberArgs: string[];
   prettyOutput: boolean;
+  summaryTable: boolean;
   tags: string;
   featureGlob: string;
   stepDefinitionGlob: string;
@@ -40,6 +41,7 @@ export function getConfig(scope?: vscode.ConfigurationScope): RunnerConfig {
     env: c.get('env', {}),
     cucumberArgs: c.get('cucumberArgs', []),
     prettyOutput: c.get('prettyOutput', true),
+    summaryTable: c.get('summaryTable', true),
     tags: c.get('tags', ''),
     featureGlob: c.get('featureGlob', '**/*.feature'),
     stepDefinitionGlob: c.get('stepDefinitionGlob', '**/*.{java,kt}'),
