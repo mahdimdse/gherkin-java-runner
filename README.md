@@ -76,6 +76,7 @@ Try it on the projects in `example/maven` and `example/gradle`.
 | `gherkinRunner.env` | `{}` | Environment variables for the test JVM |
 | `gherkinRunner.cucumberArgs` | `[]` | e.g. `["--plugin", "html:target/cucumber.html"]` |
 | `gherkinRunner.prettyOutput` | `true` | Step-by-step console output in Test Results, including `@Before` / `@After` hooks (`@BeforeStep` / `@AfterStep` only when they fail). Console formatters in `cucumber.plugin` (e.g. `progress`) are skipped while this is on |
+| `gherkinRunner.summaryTable` | `true` | When a run finishes, a table per scenario in Test Results with every step and hook, its status and duration |
 | `gherkinRunner.tags` | | Tag expression applied to every run |
 | `gherkinRunner.featureGlob` | `**/*.feature` | Where to find features |
 | `gherkinRunner.stepDefinitionGlob` | `**/*.{java,kt}` | Where to find step definitions |

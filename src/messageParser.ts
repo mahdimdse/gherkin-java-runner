@@ -1,6 +1,6 @@
 // Incremental processor for Cucumber's `message` (NDJSON) output. Pure, no vscode import.
 import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 export type CucumberStatus = 'PASSED' | 'FAILED' | 'AMBIGUOUS' | 'UNDEFINED' | 'PENDING' | 'SKIPPED' | 'UNKNOWN';
 
@@ -22,6 +22,8 @@ export interface CaseResult extends CaseKey {
   /** Snippets suggested for undefined steps. */
   snippets: string[];
   scenarioName?: string;
+  /** Every step and hook of the final attempt, in order. */
+  steps: StepReport[];
 }
 
 export type HookKind = 'Before' | 'After' | 'BeforeStep' | 'AfterStep' | 'Hook';
@@ -33,6 +35,8 @@ export interface StepReport {
   hook?: HookKind;
   /** Step text, or the hook's name / Java method. */
   text: string;
+  /** Line of the step in the feature file; undefined for hooks. */
+  line?: number;
   status: CucumberStatus;
   durationMs?: number;
   error?: string;
@@ -126,6 +130,7 @@ interface Running {
   stepLine?: number;
   stepText?: string;
   pickleStepIds: string[];
+  steps: StepReport[];
 }
 
 export class CucumberMessageProcessor {
@@ -263,6 +268,7 @@ export class CucumberMessageProcessor {
       start: tsMs(tcs.timestamp),
       worst: 'PASSED',
       pickleStepIds: [],
+      steps: [],
     });
     this.events.onCaseStarted?.(key, tcs.id, pickle.name);
   }
@@ -285,13 +291,21 @@ export class CucumberMessageProcessor {
       r.stepLine = ps ? this.lineOfAstNode.get(ps.astNodeIds[0]) : r.key.line;
       r.stepText = ps?.text;
     }
-    if (!tc || !testStep || !this.events.onStepFinished) return;
+    if (!tc || !testStep) return;
     const report: StepReport = ps
-      ? { keyword: this.keywordOfAstNode.get(ps.astNodeIds[0]) ?? '* ', text: ps.text, docString: ps.docString, dataTable: ps.dataTable, status }
+      ? {
+          keyword: this.keywordOfAstNode.get(ps.astNodeIds[0]) ?? '* ',
+          text: ps.text,
+          line: this.lineOfAstNode.get(ps.astNodeIds[0]),
+          docString: ps.docString,
+          dataTable: ps.dataTable,
+          status,
+        }
       : { hook: this.hookKind(tc, testStep), text: (testStep.hookId && this.hooks.get(testStep.hookId)?.label) || '', status };
     report.durationMs = tsMs(result.duration);
     if (status !== 'PASSED' && status !== 'SKIPPED') report.error = message;
-    this.events.onStepFinished(report, tsf.testCaseStartedId);
+    r.steps.push(report);
+    this.events.onStepFinished?.(report, tsf.testCaseStartedId);
   }
 
   private onSuggestion(s: any): void {
@@ -327,6 +341,7 @@ export class CucumberMessageProcessor {
       stepText: r.stepText,
       snippets: [...new Set(snippets)],
       scenarioName: pickle?.name,
+      steps: r.steps,
     };
     this.finished.push(result);
     this.events.onCaseFinished?.(result);
@@ -351,10 +366,13 @@ export function formatScenarioHeader(scenarioName: string, key: CaseKey): string
   return `\n${ANSI.bold}Scenario: ${scenarioName}${ANSI.reset} ${ANSI.grey}# ${path.basename(key.featurePath)}:${key.line}${ANSI.reset}\n`;
 }
 
-/** One step or hook as console text with ANSI colours; '' for passing BeforeStep/AfterStep hooks (too noisy). */
+/** Passing BeforeStep/AfterStep hooks run around every step, so they are left out (too noisy). */
+const isQuietHook = (s: StepReport) =>
+  !!s.hook && s.hook !== 'Before' && s.hook !== 'After' && (s.status === 'PASSED' || s.status === 'SKIPPED');
+
+/** One step or hook as console text with ANSI colours; '' for quiet hooks. */
 export function formatStep(s: StepReport): string {
-  const quietHook = s.hook && s.hook !== 'Before' && s.hook !== 'After';
-  if (quietHook && (s.status === 'PASSED' || s.status === 'SKIPPED')) return '';
+  if (isQuietHook(s)) return '';
   const [icon, color] = STATUS_STYLE[s.status];
   let out = s.hook
     ? `  ${color}${icon} ${s.hook}${ANSI.reset} ${ANSI.grey}${s.text}${s.durationMs !== undefined ? ` (${Math.round(s.durationMs)} ms)` : ''}${ANSI.reset}\n`
@@ -366,6 +384,72 @@ export function formatStep(s: StepReport): string {
   }
   if (s.error) out += ANSI.red + indent(s.error, '      ') + ANSI.reset;
   return out;
+}
+
+export function formatDuration(ms?: number): string {
+  if (ms === undefined) return '';
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+const truncate = (s: string, max: number) => (s.length > max ? s.slice(0, max - 1) + '…' : s);
+
+/** Opening line of the end-of-run summary: counts per status. */
+export function formatSummaryHeader(results: CaseResult[]): string {
+  const counts = new Map<CucumberStatus, number>();
+  for (const r of results) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+  const parts = [...counts].map(([status, n]) => `${STATUS_STYLE[status][1]}${n} ${status.toLowerCase()}${ANSI.reset}`);
+  return `\n${ANSI.bold}━━ Summary: ${results.length} scenario(s) ━━${ANSI.reset} ${parts.join(', ')}\n`;
+}
+
+/**
+ * Terminal hyperlink (OSC 8): shows `text`, Ctrl+click opens the feature file at `line`.
+ * Non-file feature paths (e.g. classpath:) stay plain text.
+ */
+function featureLink(featurePath: string, line: number, text: string): string {
+  if (!path.isAbsolute(featurePath)) return text;
+  return `\x1b]8;;${pathToFileURL(featurePath).href}#L${line}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+/** One scenario of the end-of-run summary: a title line and a table of its steps and hooks. */
+export function formatCaseSummary(r: CaseResult, maxStepWidth = 70): string {
+  const [icon, color] = STATUS_STYLE[r.status];
+  const file = path.basename(r.featurePath);
+  const time = r.durationMs !== undefined ? ` ${ANSI.grey}(${formatDuration(r.durationMs)})${ANSI.reset}` : '';
+  const where = featureLink(r.featurePath, r.line, `${file}:${r.line}`);
+  let out = `\n${ANSI.bold}${r.scenarioName ?? ''}${ANSI.reset} ${ANSI.grey}# ${where}${ANSI.reset}  ${color}${icon} ${r.status}${ANSI.reset}${time}\n`;
+  const rows = r.steps
+    .filter((s) => !isQuietHook(s))
+    .map((s, i) => ({
+      cells: [
+        String(i + 1),
+        truncate((s.hook ? `${s.hook} ${s.text}` : `${s.keyword ?? ''}${s.text}`).trim(), maxStepWidth),
+        `${STATUS_STYLE[s.status][0]} ${s.status.toLowerCase()}`,
+        formatDuration(s.durationMs),
+        s.line !== undefined ? `${file}:${s.line}` : '',
+      ],
+      color: STATUS_STYLE[s.status][1],
+      line: s.line,
+    }));
+  if (!rows.length) return out + `  ${ANSI.grey}(no steps reported)${ANSI.reset}\n`;
+
+  const header = ['#', 'Step', 'Status', 'Time', 'Line'];
+  const widths = header.map((h, c) => Math.max(h.length, ...rows.map((row) => row.cells[c].length)));
+  // '#' and 'Time' are right-aligned
+  const pad = (v: string, c: number) => (c === 0 || c === 3 ? v.padStart(widths[c]) : v.padEnd(widths[c]));
+  const rule = (l: string, m: string, rt: string) => `  ${l}${widths.map((w) => '─'.repeat(w + 2)).join(m)}${rt}\n`;
+  // Colours and links are added after padding, since escape sequences take no columns.
+  const line = (cells: string[], style: (v: string, c: number) => string = (v) => v) =>
+    '  │ ' + cells.map((v, c) => style(pad(v, c), c)).join(' │ ') + ' │\n';
+
+  out += rule('┌', '┬', '┐') + line(header) + rule('├', '┼', '┤');
+  for (const row of rows) {
+    out += line(row.cells, (v, c) => {
+      if (c === 2) return row.color + v + ANSI.reset;
+      if (c === 4 && row.line !== undefined) return featureLink(r.featurePath, row.line, v.trimEnd()) + v.slice(v.trimEnd().length);
+      return v;
+    });
+  }
+  return out + rule('└', '┴', '┘');
 }
 
 export interface ParsedFailure {

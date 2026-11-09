@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- When a run finishes, Test Results shows a summary: counts per status, then a table per scenario with every step and `@Before` / `@After` hook, its status and duration. Ctrl+click a step's `Line` (or the scenario's location) to open it in the feature file. Turn it off with `gherkinRunner.summaryTable`.
+
 ## 0.1.2
 
 - Maven example: a scenario that reads its values from a YAML test data file and logs them with `scenario.log`, so Test Results shows the value used for each key.
